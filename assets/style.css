@@ -1,0 +1,156 @@
+/* assets/style.css
+   MLForge — global Streamlit style overrides
+   Loaded once in Home.py via st.markdown + unsafe_allow_html
+*/
+
+/* ── Typography ─────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+}
+
+code, pre, .stCode {
+    font-family: 'DM Mono', monospace !important;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    min-width: 260px !important;
+    max-width: 280px !important;
+    background-color: var(--background-color);
+    border-right: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stSlider label,
+[data-testid="stSidebar"] .stSelectSlider label,
+[data-testid="stSidebar"] .stNumberInput label {
+    font-size: 0.82rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+/* ── Metric cards ────────────────────────────────────────── */
+[data-testid="stMetric"] {
+    background: rgba(128, 128, 128, 0.06);
+    border: 1px solid rgba(128, 128, 128, 0.12);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+}
+
+[data-testid="stMetricValue"] {
+    font-family: 'DM Mono', monospace;
+    font-size: 1.6rem !important;
+    font-weight: 500;
+}
+
+[data-testid="stMetricLabel"] {
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.55;
+}
+
+[data-testid="stMetricDelta"] {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.82rem;
+}
+
+/* ── Tables ──────────────────────────────────────────────── */
+[data-testid="stTable"] table {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.83rem;
+    border-collapse: collapse;
+    width: 100%;
+}
+
+[data-testid="stTable"] th {
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 600;
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+[data-testid="stTable"] td {
+    padding: 0.45rem 0.8rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.08);
+}
+
+/* ── Buttons ─────────────────────────────────────────────── */
+[data-testid="stButton"] button {
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+    border-radius: 8px;
+    transition: opacity 0.15s ease;
+}
+
+[data-testid="stButton"] button:hover {
+    opacity: 0.85;
+}
+
+/* ── Section headers (used via st.markdown) ──────────────── */
+.section-header {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.45;
+    margin: 1.8rem 0 0.6rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+/* ── Status badges ───────────────────────────────────────── */
+.badge-good    { color: #1a9e5c; background: #d4f5e4; padding: 2px 8px;
+                 border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge-warn    { color: #b06b00; background: #fef0d0; padding: 2px 8px;
+                 border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge-poor    { color: #c0392b; background: #fde8e6; padding: 2px 8px;
+                 border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+
+/* ── Dataframe ───────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* ── Expander ────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid rgba(128, 128, 128, 0.15) !important;
+    border-radius: 10px !important;
+}
+
+/* ── File uploader ───────────────────────────────────────── */
+[data-testid="stFileUploader"] {
+    border-radius: 10px;
+}
+
+/* ── Page title ──────────────────────────────────────────── */
+h1 {
+    font-weight: 600 !important;
+    letter-spacing: -0.03em !important;
+    font-size: 1.9rem !important;
+}
+
+h2 {
+    font-weight: 500 !important;
+    letter-spacing: -0.02em !important;
+}
+
+h3 {
+    font-weight: 500 !important;
+    font-size: 1rem !important;
+    letter-spacing: 0.01em !important;
+}
+
+/* ── Hide Streamlit default footer & menu ────────────────── */
+#MainMenu  { visibility: hidden; }
+footer     { visibility: hidden; }
