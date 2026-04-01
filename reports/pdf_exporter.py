@@ -10,24 +10,19 @@ import base64
 from jinja2    import Template
 from weasyprint import HTML
 
-from reports.report_header_helper import report_header_html
 from reports.report_builder import build_report_payload
-
-# CHANGE 1: Added imports for logo and running header
 from reports.report_header_helper import (
     pdf_cover_logo_html,
     pdf_running_header_html,
 )
 
 # ── HTML template ──────────────────────────────────────────
-# Inline template — no external file dependency.
 _TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <style>
-  /* CHANGE 2: Replaced @page CSS block */
   @page {
     size: A4;
     margin-top: 3.4cm;
@@ -45,9 +40,9 @@ _TEMPLATE = """
     }
   }
   @page :first {
-    /* Cover page — no running header, normal top margin */
     margin-top: 2.5cm;
     @top-left { content: none; }
+    @bottom-right { content: none; }
   }
   #mlforge-running-header {
     position: running(mlforge-header);
@@ -55,37 +50,74 @@ _TEMPLATE = """
     padding-bottom: 4px;
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
-  
+
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    color: #1a1a2e;
+    line-height: 1.55;
+  }
+
   /* ── Cover ───────────────────────── */
   .cover {
     text-align: center;
-    padding-top: 80px;
+    padding-top: 40px;
     page-break-after: always;
   }
   .cover h1 {
-    font-size: 26pt;
+    font-size: 36pt;
     font-weight: 700;
-    letter-spacing: -0.03em;
-    margin-bottom: 8px;
+    letter-spacing: -0.04em;
+    margin-bottom: 4px;
+    margin-top: 16px;
   }
-  .cover .subtitle {
-    font-size: 11pt;
-    color: #6b7b8d;
+  .cover h1 .ml  { color: #af0606; }
+  .cover h1 .frg { color: #d46060; }
+  .cover .report-title {
+    font-size: 18pt;
+    color: #1a1a2e;
     font-style: italic;
-    margin-bottom: 32px;
+    font-weight: 300;
+    margin-bottom: 28px;
+    margin-top: 4px;
   }
-  .cover .meta-field {
-    font-size: 10pt;
-    margin: 4px 0;
+  .cover .red-rule {
+    border: none;
+    border-top: 4px solid #af0606;
+    margin: 0 auto 24px;
+    width: 80%;
   }
-  .cover .meta-field span { font-weight: 600; }
+  .cover .meta-block {
+    text-align: left;
+    display: inline-block;
+    min-width: 300px;
+  }
+  .cover .meta-row {
+    font-size: 12pt;
+    margin: 8px 0;
+    color: #1a1a2e;
+  }
+  .cover .meta-row .lbl {
+    font-weight: 700;
+    color: #af0606;
+    min-width: 120px;
+    display: inline-block;
+  }
+  .cover .cover-footer {
+    font-size: 8pt;
+    color: #aaa;
+    font-style: italic;
+    margin-top: 48px;
+    border-top: 1px solid #ddd;
+    padding-top: 8px;
+  }
 
   /* ── Section headings ────────────── */
   h2 {
     font-size: 14pt;
     font-weight: 700;
     color: #1a1a2e;
-    border-bottom: 2px solid #4f86c6;
+    border-bottom: 2px solid #af0606;
     padding-bottom: 4px;
     margin-top: 28px;
     margin-bottom: 10px;
@@ -93,21 +125,19 @@ _TEMPLATE = """
   h3 {
     font-size: 11pt;
     font-weight: 600;
-    color: #4f86c6;
+    color: #af0606;
     margin-top: 18px;
     margin-bottom: 6px;
   }
 
   /* ── Body text ───────────────────── */
   p { margin: 0 0 8px 0; }
-
   .caption {
     font-size: 9pt;
     color: #6b7b8d;
     font-style: italic;
     margin: 4px 0 12px 0;
   }
-
   .warning-text {
     font-size: 9pt;
     color: #b06b00;
@@ -125,17 +155,17 @@ _TEMPLATE = """
     margin-bottom: 16px;
   }
   thead th {
-    background: #4f86c6;
+    background: #af0606;
     color: #ffffff;
     font-weight: 600;
     padding: 6px 10px;
     text-align: left;
   }
-  tbody tr:nth-child(even) { background: #f7f9fc; }
+  tbody tr:nth-child(even) { background: #fdf5f5; }
   tbody tr:nth-child(odd)  { background: #ffffff; }
   tbody td {
     padding: 5px 10px;
-    border-bottom: 1px solid #e0e6ef;
+    border-bottom: 1px solid #e8d5d5;
   }
 
   /* ── Lists ───────────────────────── */
@@ -152,15 +182,17 @@ _TEMPLATE = """
     margin: 8px auto 4px;
   }
 
-  /* ── Badge ───────────────────────── */
+  /* ── Badges ──────────────────────── */
   .badge-good { background:#d4f5e4; color:#1a9e5c;
-                padding:2px 7px; border-radius:3px; font-size:8.5pt; font-weight:600; }
+                padding:2px 7px; border-radius:3px;
+                font-size:8.5pt; font-weight:600; }
   .badge-warn { background:#fef0d0; color:#b06b00;
-                padding:2px 7px; border-radius:3px; font-size:8.5pt; font-weight:600; }
+                padding:2px 7px; border-radius:3px;
+                font-size:8.5pt; font-weight:600; }
   .badge-poor { background:#fde8e6; color:#c0392b;
-                padding:2px 7px; border-radius:3px; font-size:8.5pt; font-weight:600; }
+                padding:2px 7px; border-radius:3px;
+                font-size:8.5pt; font-weight:600; }
 
-  /* ── Page break helper ───────────── */
   .page-break { page-break-after: always; }
 </style>
 </head>
@@ -168,28 +200,47 @@ _TEMPLATE = """
 
 {{ running_header | safe }}
 
+<!-- ══ COVER ════════════════════════════════════════ -->
 <div class="cover">
-  <h1>{{ meta.title }}</h1>
+
   {{ cover_logo | safe }}
-  <div class="subtitle">Generated by MLForge — Universal ML Training Platform</div>
-  {% if meta.author %}
-  <div class="meta-field"><span>Author:</span> {{ meta.author }}</div>{% endif %}
-  {% if meta.institution %}
-  <div class="meta-field"><span>Institution:</span> {{ meta.institution }}</div>{% endif %}
-  <div class="meta-field"><span>Date:</span> {{ meta.date }}</div>
-  <div class="meta-field"><span>Runs included:</span> {{ n_runs }}</div>
+
+  <h1><span class="ml">ML</span><span class="frg">Forge</span></h1>
+  <div class="report-title">{{ meta.title }}</div>
+
+  <hr class="red-rule"/>
+
+  <div class="meta-block">
+    {% if meta.author %}
+    <div class="meta-row"><span class="lbl">Author:</span> {{ meta.author }}</div>
+    {% endif %}
+    {% if meta.institution %}
+    <div class="meta-row"><span class="lbl">Institution:</span> {{ meta.institution }}</div>
+    {% endif %}
+    <div class="meta-row"><span class="lbl">Date:</span> {{ meta.date }}</div>
+    <div class="meta-row"><span class="lbl">Runs included:</span> {{ n_runs }}</div>
+  </div>
+
+  <div class="cover-footer">
+    Generated by MLForge &nbsp;·&nbsp; Universal Supervised Regression Training Platform
+  </div>
+
 </div>
 
+<!-- ══ 1. INTRODUCTION ══════════════════════════════ -->
 <h2>1. Introduction</h2>
 <p>
   This report was generated by MLForge, a supervised regression training platform
-  supporting SVR (sklearn and hand-coded implementations), Random Forest, MLP,
-  Gradient Boosting, Ridge, ElasticNet, and K-Nearest Neighbours regressors.
+  supporting SVR (linear, polynomial, RBF kernels), ensemble methods, boosting models,
+  linear regressors, neural networks, and probabilistic models.
+  It is designed to replicate and compare ML algorithms reported in regression
+  and biofuel/hydrogen production ML literature.
 </p>
 {% if meta.notes %}
 <p>{{ meta.notes }}</p>
 {% endif %}
 
+<!-- ══ 2. DATASET SUMMARY ═══════════════════════════ -->
 <h2>2. Dataset Summary</h2>
 {% if profile %}
 <table>
@@ -211,10 +262,10 @@ _TEMPLATE = """
 <p>No dataset profile available.</p>
 {% endif %}
 
+<!-- ══ 3. MODEL RESULTS ══════════════════════════════ -->
 <h2>3. Model Results</h2>
 {% for run in runs %}
 <h3>Run #{{ run.run_id }} — {{ run.model_label }}</h3>
-
 <table>
   <thead><tr><th>Metric</th><th>Value</th></tr></thead>
   <tbody>
@@ -258,6 +309,7 @@ _TEMPLATE = """
 
 {% endfor %}
 
+<!-- ══ 4. COMPARISON TABLE (if > 1 run) ════════════ -->
 {% if n_runs > 1 %}
 <h2>4. Runs Comparison</h2>
 {% if comparison_rows %}
@@ -272,7 +324,6 @@ _TEMPLATE = """
   </tbody>
 </table>
 {% endif %}
-
 {% if comp_plot_b64 %}
 <p class="caption">Figure: R² comparison across all runs</p>
 <img class="plot-img"
@@ -281,15 +332,19 @@ _TEMPLATE = """
 {% endif %}
 {% endif %}
 
+<!-- ══ CONCLUSIONS ══════════════════════════════════ -->
 <h2>{{ base_sec }}. Conclusions</h2>
 <p>{{ ai_sections.conclusions }}</p>
 
+<!-- ══ RESEARCH GAPS ════════════════════════════════ -->
 <h2>{{ base_sec + 1 }}. Research Gaps</h2>
 <p>{{ ai_sections.research_gaps }}</p>
 
+<!-- ══ FUTURE WORK ══════════════════════════════════ -->
 <h2>{{ base_sec + 2 }}. Future Work</h2>
 <p>{{ ai_sections.future_work }}</p>
 
+<!-- ══ REFERENCES (dynamic) ═════════════════════════ -->
 <h2>{{ base_sec + 3 }}. References</h2>
 <ol>
   {% for authors, text in references %}
@@ -303,7 +358,7 @@ _TEMPLATE = """
 
 
 def _buf_to_b64(buf) -> str | None:
-    """Convert a BytesIO PNG buffer to a base64 string for embedding in HTML."""
+    """Convert a BytesIO PNG buffer to a base64 string for inline HTML."""
     if buf is None:
         return None
     buf.seek(0)
@@ -318,6 +373,13 @@ def build_pdf(
 ) -> tuple[bytes, str]:
     """
     Build a PDF report and return (bytes, filename).
+
+    Parameters
+    ----------
+    runs            : saved run dicts from session_store
+    report_cfg      : {title, author, institution, date, notes, include_plots}
+    dataset_profile : output of dataset_profiler.profile_dataset()
+    ai_sections     : {conclusions, research_gaps, future_work}
     """
     payload = build_report_payload(runs, report_cfg, dataset_profile, ai_sections)
 
@@ -327,14 +389,11 @@ def build_pdf(
         run["plot_bufs"] = {k: _buf_to_b64(v) for k, v in bufs.items()}
 
     comp_plot_b64 = _buf_to_b64(payload.get("comp_plot_buf"))
+    dataset_name  = runs[0].get("dataset_name", "Unknown") if runs else "Unknown"
+    target_col    = runs[0].get("target_col",   "target")  if runs else "target"
+    base_sec      = 5 if payload["n_runs"] > 1 else 4
 
-    dataset_name = runs[0].get("dataset_name", "Unknown") if runs else "Unknown"
-    target_col   = runs[0].get("target_col",   "target")  if runs else "target"
-    base_sec     = 5 if payload["n_runs"] > 1 else 4
-
-    # Render HTML template
     tmpl     = Template(_TEMPLATE)
-    # CHANGE 5: Added running_header and cover_logo to render call
     html_str = tmpl.render(
         meta            = payload["meta"],
         profile         = type("P", (), payload["profile"])() if payload["profile"] else None,
@@ -352,9 +411,7 @@ def build_pdf(
         cover_logo      = pdf_cover_logo_html(size_px=110),
     )
 
-    # WeasyPrint → PDF
-    pdf_bytes = HTML(string=html_str).write_pdf()
-
+    pdf_bytes  = HTML(string=html_str).write_pdf()
     meta       = payload["meta"]
     safe_title = meta.get("title", "MLForge_Report").replace(" ", "_")
     filename   = f"{safe_title}_{meta.get('date', 'report').replace(' ', '_')}.pdf"
