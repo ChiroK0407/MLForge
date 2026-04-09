@@ -57,8 +57,10 @@ def render_sidebar() -> dict:
             row_count = st.session_state.get("dataset_row_count", "—")
             col_count = st.session_state.get("dataset_col_count", "—")
             target    = st.session_state.get("target_col", "—")
+            input_features = st.session_state.get("input_features", [])
             st.caption(f"{row_count:,} rows · {col_count} cols" if isinstance(row_count, int) else f"{row_count} rows · {col_count} cols")
             st.caption(f"Target: **{target}**")
+            st.caption(f"Input features: **{len(input_features)}**")
         else:
             st.info("No dataset loaded.\nUpload on Home page.", icon=None)
 

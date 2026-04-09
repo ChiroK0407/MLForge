@@ -3,3 +3,7 @@ venv/
 __pycache__/
 .streamlit/
 .env
+MLForge.Documentation/
+MLForge_Documentation.docx
+*.docx
+~$*

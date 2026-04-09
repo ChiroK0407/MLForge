@@ -1,11 +1,9 @@
 # pages/6_Report_Generator.py
 # ─────────────────────────────────────────────────────────────
-# v3 — Per-section AI/Manual toggle design.
-# Each section (Conclusions, Research Gaps, Future Work) has an
-# independent toggle: "AI Generated" calls Gemini and shows a
-# read-only preview; "Write my own" shows a text_area.
-# Both paths write to the same session state key so the final
-# export always picks up whatever is in that key.
+# v4 — Smart per-run artifact selection.
+# Step 2 shows one expander per selected run. Each expander
+# contains checkboxes limited to artifacts actually saved for
+# that run. Only selected items go into the report.
 # ─────────────────────────────────────────────────────────────
 
 from config.sidebar_config import apply_page_config, render_sidebar
@@ -16,8 +14,11 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-from backend.session_store import get_runs, runs_to_dataframe, get_best_run
-from config.page_header    import render_header
+from backend.session_store import (
+    get_runs, runs_to_dataframe, get_best_run,
+    available_artifacts, artifact_label, ARTIFACT_LABELS,
+)
+from config.page_header import render_header
 
 css_path = Path("assets/style.css")
 if css_path.exists():
@@ -28,7 +29,7 @@ render_header()
 runs = get_runs()
 
 st.title("Report Generator")
-st.caption("Configure, review AI-written sections, then export.")
+st.caption("Configure, select content per run, write sections, then export.")
 
 if not runs:
     st.info("No runs saved yet. Train models on Pages 1–4 and save runs first.", icon="💾")
@@ -37,28 +38,36 @@ if not runs:
 # ══════════════════════════════════════════════════════════
 # STEP 1 — Report settings
 # ══════════════════════════════════════════════════════════
-st.markdown('<div class="section-header">Step 1 — Report settings</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Step 1 — Report settings</div>',
+            unsafe_allow_html=True)
 
 rc1, rc2 = st.columns(2)
 with rc1:
-    report_title = st.text_input("Report title", value="MLForge Training Report")
-    author_name  = st.text_input("Author name",  placeholder="Your name")
-    institution  = st.text_input("Institution / Course", placeholder="e.g. Jadavpur University · ML Minor Project")
+    report_title  = st.text_input("Report title", value="MLForge Training Report")
+    author_name   = st.text_input("Author name",  placeholder="Your name")
+    institution   = st.text_input(
+        "Institution / Course",
+        placeholder="e.g. Jadavpur University · ML Minor Project"
+    )
 
 with rc2:
     export_format    = st.selectbox("Export format", ["Word (.docx)", "PDF", "LaTeX (.tex)"])
     include_plots    = st.toggle("Include plots", value=True)
-    include_all_runs = st.toggle("Include all saved runs", value=True, help="Off → only the best run by R².")
-    extra_notes      = st.text_area(
+    include_all_runs = st.toggle(
+        "Include all saved runs", value=True,
+        help="Off → only the best run by R² is pre-selected."
+    )
+    extra_notes = st.text_area(
         "Additional context (optional)",
         placeholder="Dataset background, study objectives, domain specifics…",
         height=90,
     )
 
 # ══════════════════════════════════════════════════════════
-# STEP 2 — Select runs
+# STEP 2 — Select runs + per-run content
 # ══════════════════════════════════════════════════════════
-st.markdown('<div class="section-header">Step 2 — Select runs</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Step 2 — Select runs & content</div>',
+            unsafe_allow_html=True)
 
 comp_df      = runs_to_dataframe(runs)
 best_run_obj = get_best_run()
@@ -68,7 +77,12 @@ default_ids  = (
     else ([best_run_obj["run_id"]] if best_run_obj else [])
 )
 
-st.dataframe(comp_df, width='stretch', hide_index=True)
+# Compact overview table
+st.dataframe(
+    comp_df[["#", "time", "model", "R²", "RMSE", "artifacts", "notes"]],
+    width='stretch',
+    hide_index=True,
+)
 
 selected_ids = st.multiselect(
     "Run IDs to include",
@@ -85,17 +99,68 @@ if not selected_runs:
     st.warning("Select at least one run to continue.")
     st.stop()
 
-# ══════════════════════════════════════════════════════════
-# STEP 3 — Per-section AI / Manual toggle
-# ══════════════════════════════════════════════════════════
-st.markdown('<div class="section-header">Step 3 — Written sections</div>', unsafe_allow_html=True)
-
 st.markdown(
-    "Each section can be **AI-generated** (Gemini analyses your results) "
+    "Expand each run below to choose which saved artifacts to include in the report. "
+    "Only artifacts that were saved on Page 1 are shown."
+)
+
+# per_run_include: {run_id: [artifact_key, ...]}
+per_run_include: dict[int, list[str]] = {}
+
+for run in selected_runs:
+    rid           = run["run_id"]
+    model_lbl     = run["model_label"]
+    m             = run["metrics"]
+    avail_keys    = available_artifacts(run)
+
+    with st.expander(
+        f"Run #{rid} — {model_lbl}  "
+        f"(R²={m.get('R2',0):.4f}, RMSE={m.get('RMSE',0):.4f})  "
+        f"· {len(avail_keys)} artifact(s) saved",
+        expanded=True,
+    ):
+        if not avail_keys:
+            st.caption(
+                "No artifacts were saved for this run. "
+                "Only metrics and AI interpretation will appear in the report."
+            )
+            per_run_include[rid] = []
+            continue
+
+        # Show metrics always (not an artifact, always included)
+        st.caption("✓ Metrics table — always included")
+
+        # Checkboxes for each saved artifact
+        run_selected_keys = []
+        cols = st.columns(2)
+        for i, key in enumerate(avail_keys):
+            with cols[i % 2]:
+                checked = st.checkbox(
+                    artifact_label(key),
+                    value=True,
+                    key=f"art_{rid}_{key}",
+                )
+                if checked:
+                    run_selected_keys.append(key)
+
+        per_run_include[rid] = run_selected_keys
+
+        # Summary of what will appear
+        if run_selected_keys:
+            st.caption(
+                f"Will include: {', '.join(artifact_label(k) for k in run_selected_keys)}"
+            )
+
+# ══════════════════════════════════════════════════════════
+# STEP 3 — Written sections (AI / Manual per section)
+# ══════════════════════════════════════════════════════════
+st.markdown('<div class="section-header">Step 3 — Written sections</div>',
+            unsafe_allow_html=True)
+st.markdown(
+    "Each section can be **AI-generated** (Claude analyses your results) "
     "or **written manually**. Toggle independently per section."
 )
 
-# Session state init
 for key in ["sec_conclusions", "sec_gaps", "sec_future"]:
     if key not in st.session_state:
         st.session_state[key] = ""
@@ -116,10 +181,6 @@ def _section_widget(
     placeholder: str,
     caption:     str,
 ) -> str:
-    """
-    Render one report section with an AI / Manual toggle.
-    Returns the current text for this section.
-    """
     st.markdown(f"#### {label}")
     st.caption(caption)
 
@@ -138,9 +199,11 @@ def _section_widget(
     if mode == "AI Generated":
         gen_btn = st.button(f"Generate {label}", key=f"gen_{state_key}")
         if gen_btn:
-            with st.spinner(f"Gemini is writing {label.lower()}…"):
+            with st.spinner(f"Claude is writing {label.lower()}…"):
                 from reports.ai_conclusions import generate_ai_sections
-                result = generate_ai_sections(selected_runs, dataset_profile, report_cfg_for_ai)
+                result = generate_ai_sections(
+                    selected_runs, dataset_profile, report_cfg_for_ai
+                )
                 st.session_state[state_key] = result.get(ai_key, "")
 
         current = st.session_state[state_key]
@@ -155,10 +218,9 @@ def _section_widget(
             st.caption("✓ AI-generated — will appear verbatim in the report.")
         else:
             st.info("Click the button above to generate this section.", icon="🤖")
-
         return current
 
-    else:  # Write my own
+    else:
         text = st.text_area(
             label,
             value=st.session_state[state_key],
@@ -178,57 +240,60 @@ conclusions_text = _section_widget(
     placeholder = "Summarise which model performed best and what the metrics indicate…",
     caption     = "Which model performed best, what the metrics indicate about fit quality.",
 )
-
 gaps_text = _section_widget(
     label       = "Research Gaps",
     state_key   = "sec_gaps",
     ai_key      = "research_gaps",
     placeholder = "Describe limitations — dataset size, missing data, model coverage…",
-    caption     = "Limitations visible in this experiment — data quality, model coverage, validation.",
+    caption     = "Limitations visible in this experiment.",
 )
-
 future_text = _section_widget(
     label       = "Future Work",
     state_key   = "sec_future",
     ai_key      = "future_work",
     placeholder = "Describe next steps — more models, better data, deployment…",
-    caption     = "Concrete next steps — additional models, data improvements, deployment.",
+    caption     = "Concrete next steps.",
 )
 
 # ══════════════════════════════════════════════════════════
 # STEP 4 — Preview
 # ══════════════════════════════════════════════════════════
-st.markdown('<div class="section-header">Step 4 — Preview</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Step 4 — Preview</div>',
+            unsafe_allow_html=True)
 
 with st.expander("Preview report structure", expanded=False):
     pc1, pc2 = st.columns([1, 1])
     with pc1:
         st.markdown(f"**{report_title or 'MLForge Training Report'}**")
-        if author_name:
-            st.markdown(f"Author: {author_name}")
-        if institution:
-            st.markdown(f"Institution: {institution}")
+        if author_name:   st.markdown(f"Author: {author_name}")
+        if institution:   st.markdown(f"Institution: {institution}")
         st.markdown(f"Date: {datetime.now().strftime('%d %B %Y')}")
     with pc2:
         profile = st.session_state.get("dataset_profile")
         if profile:
             mc1, mc2 = st.columns(2)
-            mc1.metric("Rows",     f"{profile['n_rows']:,}")
+            mc1.metric("Rows",    f"{profile['n_rows']:,}")
             mc2.metric("Features", profile["n_features"])
             mc3, mc4 = st.columns(2)
             mc3.metric("Missing %",  f"{profile['missing_pct']:.1f}%")
             mc4.metric("Time-series","Yes" if profile["is_time_series"] else "No")
 
     st.divider()
-    st.markdown("**Models included:**")
+    st.markdown("**Content per run:**")
     for run in selected_runs:
-        m = run["metrics"]
-        st.markdown(f"- **{run['model_label']}** — R²={m['R2']:.4f}, RMSE={m['RMSE']:.4f}")
+        rid       = run["run_id"]
+        selected  = per_run_include.get(rid, [])
+        m         = run["metrics"]
+        items     = ["Metrics"] + [artifact_label(k) for k in selected]
+        st.markdown(
+            f"- **Run #{rid} {run['model_label']}** "
+            f"(R²={m.get('R2',0):.4f}) — "
+            + ", ".join(items)
+        )
 
     sections = ["1. Introduction", "2. Dataset Summary", "3. Model Results"]
-    n = len(selected_runs)
-    offset = 3
-    if n > 1:
+    offset   = 3
+    if len(selected_runs) > 1:
         offset += 1
         sections.append("4. Runs Comparison")
     sections += [
@@ -245,8 +310,8 @@ with st.expander("Preview report structure", expanded=False):
 # ══════════════════════════════════════════════════════════
 # STEP 5 — Export
 # ══════════════════════════════════════════════════════════
-st.markdown('<div class="section-header">Step 5 — Export</div>', unsafe_allow_html=True)
-
+st.markdown('<div class="section-header">Step 5 — Export</div>',
+            unsafe_allow_html=True)
 st.caption(
     "References are generated dynamically — only papers relevant to the models "
     "and tools used in your runs will appear."
@@ -271,19 +336,31 @@ if st.button("Generate report", type="primary"):
 
     try:
         with st.spinner(f"Building {export_format} report…"):
+
+            kwargs = dict(
+                runs            = selected_runs,
+                report_cfg      = report_cfg,
+                dataset_profile = dataset_profile,
+                ai_sections     = ai_sections,
+                per_run_include = per_run_include,
+            )
+
             if export_format == "Word (.docx)":
                 from reports.docx_exporter import build_docx
-                buf, filename = build_docx(selected_runs, report_cfg, dataset_profile, ai_sections)
-                mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                buf, filename = build_docx(**kwargs)
+                mime = (
+                    "application/vnd.openxmlformats-officedocument"
+                    ".wordprocessingml.document"
+                )
 
             elif export_format == "PDF":
                 from reports.pdf_exporter import build_pdf
-                buf, filename = build_pdf(selected_runs, report_cfg, dataset_profile, ai_sections)
+                buf, filename = build_pdf(**kwargs)
                 mime = "application/pdf"
 
             else:
                 from reports.latex_exporter import build_latex
-                buf, filename = build_latex(selected_runs, report_cfg, dataset_profile, ai_sections)
+                buf, filename = build_latex(**kwargs)
                 mime = "application/zip"
 
         st.success(f"Report ready — **{filename}**")

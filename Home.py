@@ -170,9 +170,47 @@ if uploaded:
     target_col = st.selectbox(
         "Column to predict (y)",
         options=numeric_cols,
-        help="All other numeric columns become features (X).",
+        help="Select the column you want to predict.",
     )
     st.session_state["target_col"] = target_col
+
+    # ── Feature selection ───────────────────────────────────
+    st.markdown('<div class="section-header">Select input features</div>', unsafe_allow_html=True)
+    st.markdown(
+        "Choose which columns to use as input features (X). "
+        "Deselect columns that are outputs, irrelevant, or should be excluded from training. "
+        "Datetime columns will be automatically converted to numeric features."
+    )
+    
+    all_cols = df.columns.tolist()
+    available_features = [col for col in all_cols if col != target_col]
+    
+    if not available_features:
+        st.error("No columns available as features.")
+        st.stop()
+    
+    # Default: select all available features
+    default_selected = available_features
+    
+    selected_features = st.multiselect(
+        "Input features (X)",
+        options=available_features,
+        default=default_selected,
+        help="Only selected columns will be used for training. Datetime columns will be parsed into numeric features.",
+    )
+    
+    if not selected_features:
+        st.warning("Select at least one input feature.")
+        st.stop()
+    
+    st.session_state["input_features"] = selected_features
+
+    # ── Finalize dataset ───────────────────────────────────
+    col_left, col_right = st.columns([3, 1])
+    with col_right:
+        if st.button(f"✅ Go with {len(selected_features)} features", type="primary", use_container_width=True):
+            st.success(f"Dataset finalized with {len(selected_features)} input features!")
+            st.balloons()
 
     # ── Preview ────────────────────────────────────────────
     st.markdown('<div class="section-header">Preview</div>', unsafe_allow_html=True)
@@ -193,6 +231,8 @@ if uploaded:
             st.markdown(f'<span class="badge-poor">{missing} ({missing_pct:.1f}%)</span>', unsafe_allow_html=True)
         st.markdown("**Target**")
         st.code(target_col, language=None)
+        st.markdown("**Input features**")
+        st.code(f"{len(selected_features)} selected")
         st.markdown("**Target stats**")
         st.dataframe(df[target_col].describe().rename("value").to_frame(), width='stretch')
 
@@ -204,7 +244,7 @@ if uploaded:
 
     pc1, pc2, pc3, pc4 = st.columns(4)
     pc1.metric("Rows",         f"{profile['n_rows']:,}")
-    pc2.metric("Features",     profile["n_features"])
+    pc2.metric("Features",     f"{len(selected_features)} selected")
     pc3.metric("Missing %",    f"{profile['missing_pct']:.1f}%")
     pc4.metric("Time-series?", "Yes" if profile["is_time_series"] else "No")
 

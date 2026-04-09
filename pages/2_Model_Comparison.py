@@ -28,6 +28,7 @@ if "df" not in st.session_state:
 
 df         = st.session_state["df"]
 target_col = st.session_state.get("target_col", df.columns[-1])
+input_features = st.session_state.get("input_features")
 
 # ── Config summary strip ───────────────────────────────────
 st.caption(
@@ -68,7 +69,7 @@ st.markdown('<div class="section-header">Run</div>', unsafe_allow_html=True)
 
 if st.button("Run comparison", type="primary"):
     with st.spinner(f"Training {len(selected_keys)} models on shared split…"):
-        results = train_multiple_models(df, target_col, selected_keys, cfg)
+        results = train_multiple_models(df, target_col, selected_keys, cfg, input_features=input_features)
     st.session_state["p2_results"] = results
     st.success(f"Trained {len(results)} models.")
 
@@ -153,6 +154,16 @@ with save_col2:
             y_test        = best_v["data"]["y_test"],
             y_pred        = best_v["data"]["y_pred"],
             target_col    = target_col,
+            input_features= input_features,
             notes         = save_notes or f"Best from comparison: {best_label}",
         )
         st.success(f"Best model saved as run #{run_id}.")
+
+# ── Clear/Refresh ──────────────────────────────────────────
+st.markdown("---")
+col_clear, col_spacer = st.columns([1, 3])
+with col_clear:
+    if st.button("🔄 Clear & Refresh", help="Keep dataset loaded, clear comparison results, and return to model selection"):
+        # Clear comparison-related session state
+        st.session_state.pop("p2_results", None)
+        st.rerun()

@@ -24,6 +24,7 @@ def preprocess(
     df: pd.DataFrame,
     target_col: str,
     sort_by_time: bool = True,
+    input_features: list[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, StandardScaler, SimpleImputer, list[str]]:
     """
     Robust preprocessing for any tabular dataset.
@@ -37,6 +38,11 @@ def preprocess(
     5. Impute missing values (column mean)
     6. StandardScale features
 
+    Parameters
+    ----------
+    input_features : list of column names to use as features.
+                     If None, uses all columns except target_col.
+
     Returns
     -------
     X_scaled, y, scaler, imputer, feature_names
@@ -49,7 +55,13 @@ def preprocess(
         if time_candidates:
             df = df.sort_values(by=time_candidates[0]).reset_index(drop=True)
 
-    X = df.drop(columns=[target_col])
+    if input_features is not None:
+        # Use only selected input features
+        X = df[input_features].copy()
+    else:
+        # Default: all columns except target
+        X = df.drop(columns=[target_col])
+    
     y = df[target_col].values.astype(float)
 
     # Parse datetime / object columns
@@ -128,6 +140,7 @@ def train_model(
     model_key: str,
     cfg: dict,
     custom_params: dict | None = None,
+    input_features: list[str] | None = None,
 ) -> dict:
     """
     Full pipeline: preprocess → split → train → evaluate.
@@ -149,7 +162,7 @@ def train_model(
     sort_by_time = "time" in [c.lower() for c in df.columns]
 
     X_scaled, y, scaler, imputer, feature_names = preprocess(
-        df, target_col, sort_by_time=sort_by_time
+        df, target_col, sort_by_time=sort_by_time, input_features=input_features
     )
 
     X_train, X_test, y_train, y_test = split_data(X_scaled, y, cfg)
@@ -189,6 +202,7 @@ def train_multiple_models(
     target_col: str,
     model_keys: list[str],
     cfg: dict,
+    input_features: list[str] | None = None,
 ) -> dict[str, dict]:
     """
     Train several models on the same preprocessed split.
@@ -201,7 +215,7 @@ def train_multiple_models(
     sort_by_time = "time" in [c.lower() for c in df.columns]
 
     X_scaled, y, scaler, imputer, feature_names = preprocess(
-        df, target_col, sort_by_time=sort_by_time
+        df, target_col, sort_by_time=sort_by_time, input_features=input_features
     )
     X_train, X_test, y_train, y_test = split_data(X_scaled, y, cfg)
 

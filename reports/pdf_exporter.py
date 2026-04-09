@@ -1,8 +1,9 @@
 # reports/pdf_exporter.py
 # ─────────────────────────────────────────────────────────────
-# Generates a PDF report via an HTML template rendered with
-# Jinja2 and converted by WeasyPrint.
-# Returns (bytes, filename) ready for st.download_button.
+# Generates a PDF report via Jinja2 HTML → WeasyPrint.
+# v3: Feature importance, autotune history/comparison now
+#     rendered in the per-run model results section.
+#     Accepts per_run_include from Page 6.
 # ─────────────────────────────────────────────────────────────
 
 import io
@@ -10,13 +11,12 @@ import base64
 from jinja2    import Template
 from weasyprint import HTML
 
-from reports.report_builder import build_report_payload
+from reports.report_builder       import build_report_payload
 from reports.report_header_helper import (
     pdf_cover_logo_html,
     pdf_running_header_html,
 )
 
-# ── HTML template ──────────────────────────────────────────
 _TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -25,23 +25,17 @@ _TEMPLATE = """
 <style>
   @page {
     size: A4;
-    margin-top: 3.4cm;
-    margin-bottom: 2.5cm;
-    margin-left: 2.8cm;
-    margin-right: 2.8cm;
-    @top-left {
-      content: element(mlforge-header);
-      width: 100%;
-    }
+    margin-top: 3.4cm; margin-bottom: 2.5cm;
+    margin-left: 2.8cm; margin-right: 2.8cm;
+    @top-left   { content: element(mlforge-header); width: 100%; }
     @bottom-right {
       content: "Page " counter(page) " of " counter(pages);
-      font-size: 8pt;
-      color: #aaa;
+      font-size: 8pt; color: #aaa;
     }
   }
   @page :first {
     margin-top: 2.5cm;
-    @top-left { content: none; }
+    @top-left     { content: none; }
     @bottom-right { content: none; }
   }
   #mlforge-running-header {
@@ -53,146 +47,77 @@ _TEMPLATE = """
 
   body {
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 10.5pt;
-    color: #1a1a2e;
-    line-height: 1.55;
+    font-size: 10.5pt; color: #1a1a2e; line-height: 1.55;
   }
 
-  /* ── Cover ───────────────────────── */
+  /* ── Cover ─────────────────────── */
   .cover {
-    text-align: center;
-    padding-top: 40px;
-    page-break-after: always;
+    text-align: center; padding-top: 40px; page-break-after: always;
   }
-  .cover h1 {
-    font-size: 36pt;
-    font-weight: 700;
-    letter-spacing: -0.04em;
-    margin-bottom: 4px;
-    margin-top: 16px;
-  }
+  .cover h1 { font-size: 36pt; font-weight: 700;
+               letter-spacing: -0.04em; margin: 16px 0 4px; }
   .cover h1 .ml  { color: #af0606; }
   .cover h1 .frg { color: #d46060; }
   .cover .report-title {
-    font-size: 18pt;
-    color: #1a1a2e;
-    font-style: italic;
-    font-weight: 300;
-    margin-bottom: 28px;
-    margin-top: 4px;
+    font-size: 18pt; color: #1a1a2e; font-style: italic;
+    font-weight: 300; margin: 4px 0 28px;
   }
   .cover .red-rule {
-    border: none;
-    border-top: 4px solid #af0606;
-    margin: 0 auto 24px;
-    width: 80%;
+    border: none; border-top: 4px solid #af0606;
+    margin: 0 auto 24px; width: 80%;
   }
-  .cover .meta-block {
-    text-align: left;
-    display: inline-block;
-    min-width: 300px;
-  }
-  .cover .meta-row {
-    font-size: 12pt;
-    margin: 8px 0;
-    color: #1a1a2e;
-  }
+  .cover .meta-block { text-align: left; display: inline-block; min-width: 300px; }
+  .cover .meta-row   { font-size: 12pt; margin: 8px 0; color: #1a1a2e; }
   .cover .meta-row .lbl {
-    font-weight: 700;
-    color: #af0606;
-    min-width: 120px;
-    display: inline-block;
+    font-weight: 700; color: #af0606;
+    min-width: 130px; display: inline-block;
   }
   .cover .cover-footer {
-    font-size: 8pt;
-    color: #aaa;
-    font-style: italic;
-    margin-top: 48px;
-    border-top: 1px solid #ddd;
-    padding-top: 8px;
+    font-size: 8pt; color: #aaa; font-style: italic;
+    margin-top: 48px; border-top: 1px solid #ddd; padding-top: 8px;
   }
 
-  /* ── Section headings ────────────── */
-  h2 {
-    font-size: 14pt;
-    font-weight: 700;
-    color: #1a1a2e;
-    border-bottom: 2px solid #af0606;
-    padding-bottom: 4px;
-    margin-top: 28px;
-    margin-bottom: 10px;
-  }
-  h3 {
-    font-size: 11pt;
-    font-weight: 600;
-    color: #af0606;
-    margin-top: 18px;
-    margin-bottom: 6px;
-  }
+  /* ── Headings ─────────────────── */
+  h2 { font-size: 14pt; font-weight: 700; color: #1a1a2e;
+       border-bottom: 2px solid #af0606; padding-bottom: 4px;
+       margin-top: 28px; margin-bottom: 10px; }
+  h3 { font-size: 11pt; font-weight: 600; color: #af0606;
+       margin-top: 18px; margin-bottom: 6px; }
+  h4 { font-size: 10pt; font-weight: 600; color: #2e5f9e;
+       margin-top: 14px; margin-bottom: 4px; }
 
-  /* ── Body text ───────────────────── */
-  p { margin: 0 0 8px 0; }
-  .caption {
-    font-size: 9pt;
-    color: #6b7b8d;
-    font-style: italic;
-    margin: 4px 0 12px 0;
-  }
-  .warning-text {
-    font-size: 9pt;
-    color: #b06b00;
-    background: #fef3d0;
-    padding: 4px 8px;
-    border-left: 3px solid #e0a84a;
-    margin: 6px 0;
-  }
+  /* ── Body ─────────────────────── */
+  p  { margin: 0 0 8px 0; }
+  .caption   { font-size:9pt; color:#6b7b8d; font-style:italic; margin:4px 0 12px; }
+  .warn-text { font-size:9pt; color:#b06b00; background:#fef3d0;
+               padding:4px 8px; border-left:3px solid #e0a84a; margin:6px 0; }
 
-  /* ── Tables ──────────────────────── */
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 9pt;
-    margin-bottom: 16px;
-  }
-  thead th {
-    background: #af0606;
-    color: #ffffff;
-    font-weight: 600;
-    padding: 6px 10px;
-    text-align: left;
-  }
-  tbody tr:nth-child(even) { background: #fdf5f5; }
-  tbody tr:nth-child(odd)  { background: #ffffff; }
-  tbody td {
-    padding: 5px 10px;
-    border-bottom: 1px solid #e8d5d5;
-  }
+  /* ── Tables ───────────────────── */
+  table { width:100%; border-collapse:collapse; font-size:9pt; margin-bottom:16px; }
+  thead th { background:#af0606; color:#fff; font-weight:600;
+             padding:6px 10px; text-align:left; }
+  tbody tr:nth-child(even) { background:#fdf5f5; }
+  tbody tr:nth-child(odd)  { background:#ffffff; }
+  tbody td { padding:5px 10px; border-bottom:1px solid #e8d5d5; }
 
-  /* ── Lists ───────────────────────── */
-  ul, ol {
-    margin: 4px 0 12px 20px;
-    font-size: 9.5pt;
-  }
-  li { margin-bottom: 3px; }
+  table.at-table thead th { background: #2e5f9e; }
+  table.at-table tbody tr:nth-child(even) { background:#f4f8fd; }
+  table.at-table tbody td { border-bottom:1px solid #dce8f5; }
 
-  /* ── Images ──────────────────────── */
-  .plot-img {
-    display: block;
-    max-width: 100%;
-    margin: 8px auto 4px;
-  }
+  /* ── Lists ─────────────────────── */
+  ul, ol { margin:4px 0 12px 20px; font-size:9.5pt; }
+  li { margin-bottom:3px; }
 
-  /* ── Badges ──────────────────────── */
-  .badge-good { background:#d4f5e4; color:#1a9e5c;
-                padding:2px 7px; border-radius:3px;
-                font-size:8.5pt; font-weight:600; }
-  .badge-warn { background:#fef0d0; color:#b06b00;
-                padding:2px 7px; border-radius:3px;
-                font-size:8.5pt; font-weight:600; }
-  .badge-poor { background:#fde8e6; color:#c0392b;
-                padding:2px 7px; border-radius:3px;
-                font-size:8.5pt; font-weight:600; }
+  /* ── Images ────────────────────── */
+  .plot-img { display:block; max-width:100%; margin:8px auto 4px; }
 
+  /* ── Badges ────────────────────── */
+  .badge-good { background:#d4f5e4; color:#1a9e5c; padding:2px 7px;
+                border-radius:3px; font-size:8.5pt; font-weight:600; }
+  .badge-warn { background:#fef0d0; color:#b06b00; padding:2px 7px;
+                border-radius:3px; font-size:8.5pt; font-weight:600; }
+  .badge-poor { background:#fde8e6; color:#c0392b; padding:2px 7px;
+                border-radius:3px; font-size:8.5pt; font-weight:600; }
   .page-break { page-break-after: always; }
 </style>
 </head>
@@ -200,72 +125,62 @@ _TEMPLATE = """
 
 {{ running_header | safe }}
 
-<!-- ══ COVER ════════════════════════════════════════ -->
+<!-- ══ COVER ════════════════════════════════════════════ -->
 <div class="cover">
-
   {{ cover_logo | safe }}
-
   <h1><span class="ml">ML</span><span class="frg">Forge</span></h1>
   <div class="report-title">{{ meta.title }}</div>
-
   <hr class="red-rule"/>
-
   <div class="meta-block">
     {% if meta.author %}
-    <div class="meta-row"><span class="lbl">Author:</span> {{ meta.author }}</div>
-    {% endif %}
+    <div class="meta-row"><span class="lbl">Author:</span> {{ meta.author }}</div>{% endif %}
     {% if meta.institution %}
-    <div class="meta-row"><span class="lbl">Institution:</span> {{ meta.institution }}</div>
-    {% endif %}
+    <div class="meta-row"><span class="lbl">Institution:</span> {{ meta.institution }}</div>{% endif %}
     <div class="meta-row"><span class="lbl">Date:</span> {{ meta.date }}</div>
     <div class="meta-row"><span class="lbl">Runs included:</span> {{ n_runs }}</div>
   </div>
-
   <div class="cover-footer">
     Generated by MLForge &nbsp;·&nbsp; Universal Supervised Regression Training Platform
   </div>
-
 </div>
 
-<!-- ══ 1. INTRODUCTION ══════════════════════════════ -->
+<!-- ══ 1. INTRODUCTION ══════════════════════════════════ -->
 <h2>1. Introduction</h2>
 <p>
   This report was generated by MLForge, a supervised regression training platform
-  supporting SVR (linear, polynomial, RBF kernels), ensemble methods, boosting models,
-  linear regressors, neural networks, and probabilistic models.
-  It is designed to replicate and compare ML algorithms reported in regression
-  and biofuel/hydrogen production ML literature.
+  supporting SVR, ensemble methods, boosting models, linear regressors,
+  neural networks, and probabilistic models.
 </p>
-{% if meta.notes %}
-<p>{{ meta.notes }}</p>
-{% endif %}
+{% if meta.notes %}<p>{{ meta.notes }}</p>{% endif %}
 
-<!-- ══ 2. DATASET SUMMARY ═══════════════════════════ -->
+<!-- ══ 2. DATASET SUMMARY ═══════════════════════════════ -->
 <h2>2. Dataset Summary</h2>
 {% if profile %}
 <table>
   <thead><tr><th>Property</th><th>Value</th></tr></thead>
   <tbody>
-    <tr><td>Dataset</td><td>{{ dataset_name }}</td></tr>
-    <tr><td>Rows</td><td>{{ "{:,}".format(profile.n_rows) }}</td></tr>
-    <tr><td>Columns</td><td>{{ profile.n_cols }}</td></tr>
-    <tr><td>Features (numeric)</td><td>{{ profile.n_features }}</td></tr>
-    <tr><td>Missing values</td><td>{{ "%.1f"|format(profile.missing_pct) }}%</td></tr>
-    <tr><td>Time-series</td><td>{{ "Yes" if profile.is_time_series else "No" }}</td></tr>
-    <tr><td>Target column</td><td>{{ target_col }}</td></tr>
+    <tr><td>Dataset</td>          <td>{{ dataset_name }}</td></tr>
+    <tr><td>Rows</td>             <td>{{ "{:,}".format(profile.n_rows) }}</td></tr>
+    <tr><td>Columns</td>          <td>{{ profile.n_cols }}</td></tr>
+    <tr><td>Numeric features</td> <td>{{ profile.n_features }}</td></tr>
+    <tr><td>Missing values</td>   <td>{{ "%.1f"|format(profile.missing_pct) }}%</td></tr>
+    <tr><td>Time-series</td>      <td>{{ "Yes" if profile.is_time_series else "No" }}</td></tr>
+    <tr><td>Target column</td>    <td>{{ target_col }}</td></tr>
   </tbody>
 </table>
 {% for w in profile.warnings %}
-<div class="warning-text">{{ w }}</div>
+<div class="warn-text">{{ w }}</div>
 {% endfor %}
 {% else %}
 <p>No dataset profile available.</p>
 {% endif %}
 
-<!-- ══ 3. MODEL RESULTS ══════════════════════════════ -->
+<!-- ══ 3. MODEL RESULTS ══════════════════════════════════ -->
 <h2>3. Model Results</h2>
 {% for run in runs %}
 <h3>Run #{{ run.run_id }} — {{ run.model_label }}</h3>
+
+<!-- Metrics -->
 <table>
   <thead><tr><th>Metric</th><th>Value</th></tr></thead>
   <tbody>
@@ -276,6 +191,7 @@ _TEMPLATE = """
   </tbody>
 </table>
 
+<!-- Interpretation -->
 {% set an = run.analysis %}
 <p>
   <span class="{{ an.r2_badge }}">{{ an.r2_label|upper }}</span>
@@ -289,10 +205,36 @@ _TEMPLATE = """
 <ul>{% for r in an.recommendations %}<li>{{ r }}</li>{% endfor %}</ul>
 {% endif %}
 
-{% if run.best_params %}
-<p class="caption">Auto-tuned parameters: {{ run.best_params }}</p>
+<!-- Auto-tune results (text) -->
+{% if run.autotune_metrics %}
+{% set at = run.autotune_metrics %}
+<h4>Auto-tune Results</h4>
+<p>
+  Best CV R² = <strong>{{ at.best_score }}</strong>
+  via {{ at.method }} ({{ at.n_trials }} trials).
+  Best parameters: {{ at.best_params }}
+</p>
 {% endif %}
 
+<!-- Auto-tune comparison table -->
+{% if run.autotune_comparison %}
+<p class="caption">Table: Original vs Auto-tuned metrics</p>
+<table class="at-table">
+  <thead><tr><th>Metric</th><th>Original</th><th>Tuned</th><th>Δ</th></tr></thead>
+  <tbody>
+  {% for row in run.autotune_comparison %}
+    <tr>
+      <td>{{ row.Metric }}</td>
+      <td>{{ row.Original }}</td>
+      <td>{{ row.Tuned }}</td>
+      <td>{{ row["Δ"] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<!-- Actual vs Predicted -->
 {% if run.plot_bufs.actual_vs_predicted %}
 <p class="caption">Figure: Actual vs Predicted values on test set</p>
 <img class="plot-img"
@@ -300,6 +242,7 @@ _TEMPLATE = """
      alt="Actual vs Predicted"/>
 {% endif %}
 
+<!-- Residuals -->
 {% if run.plot_bufs.residuals %}
 <p class="caption">Figure: Residual distribution</p>
 <img class="plot-img"
@@ -307,9 +250,25 @@ _TEMPLATE = """
      alt="Residuals"/>
 {% endif %}
 
+<!-- Feature importance -->
+{% if run.plot_bufs.feature_importance %}
+<p class="caption">Figure: Feature importance (normalised)</p>
+<img class="plot-img"
+     src="data:image/png;base64,{{ run.plot_bufs.feature_importance }}"
+     alt="Feature importance"/>
+{% endif %}
+
+<!-- Autotune trial history -->
+{% if run.plot_bufs.autotune_history %}
+<p class="caption">Figure: Auto-tune trial R² history</p>
+<img class="plot-img"
+     src="data:image/png;base64,{{ run.plot_bufs.autotune_history }}"
+     alt="Auto-tune history"/>
+{% endif %}
+
 {% endfor %}
 
-<!-- ══ 4. COMPARISON TABLE (if > 1 run) ════════════ -->
+<!-- ══ 4. COMPARISON TABLE (if > 1 run) ════════════════ -->
 {% if n_runs > 1 %}
 <h2>4. Runs Comparison</h2>
 {% if comparison_rows %}
@@ -332,19 +291,17 @@ _TEMPLATE = """
 {% endif %}
 {% endif %}
 
-<!-- ══ CONCLUSIONS ══════════════════════════════════ -->
+<!-- ══ AI SECTIONS ══════════════════════════════════════ -->
 <h2>{{ base_sec }}. Conclusions</h2>
 <p>{{ ai_sections.conclusions }}</p>
 
-<!-- ══ RESEARCH GAPS ════════════════════════════════ -->
 <h2>{{ base_sec + 1 }}. Research Gaps</h2>
 <p>{{ ai_sections.research_gaps }}</p>
 
-<!-- ══ FUTURE WORK ══════════════════════════════════ -->
 <h2>{{ base_sec + 2 }}. Future Work</h2>
 <p>{{ ai_sections.future_work }}</p>
 
-<!-- ══ REFERENCES (dynamic) ═════════════════════════ -->
+<!-- ══ REFERENCES (dynamic) ════════════════════════════ -->
 <h2>{{ base_sec + 3 }}. References</h2>
 <ol>
   {% for authors, text in references %}
@@ -358,7 +315,6 @@ _TEMPLATE = """
 
 
 def _buf_to_b64(buf) -> str | None:
-    """Convert a BytesIO PNG buffer to a base64 string for inline HTML."""
     if buf is None:
         return None
     buf.seek(0)
@@ -370,20 +326,13 @@ def build_pdf(
     report_cfg:      dict,
     dataset_profile: dict,
     ai_sections:     dict | None = None,
+    per_run_include: dict | None = None,
 ) -> tuple[bytes, str]:
-    """
-    Build a PDF report and return (bytes, filename).
+    """Build a PDF report and return (bytes, filename)."""
+    payload = build_report_payload(
+        runs, report_cfg, dataset_profile, ai_sections, per_run_include
+    )
 
-    Parameters
-    ----------
-    runs            : saved run dicts from session_store
-    report_cfg      : {title, author, institution, date, notes, include_plots}
-    dataset_profile : output of dataset_profiler.profile_dataset()
-    ai_sections     : {conclusions, research_gaps, future_work}
-    """
-    payload = build_report_payload(runs, report_cfg, dataset_profile, ai_sections)
-
-    # Encode all plot buffers as base64 for inline HTML
     for run in payload["runs"]:
         bufs = run.get("plot_bufs", {})
         run["plot_bufs"] = {k: _buf_to_b64(v) for k, v in bufs.items()}
@@ -404,7 +353,7 @@ def build_pdf(
         comp_plot_b64   = comp_plot_b64,
         best_run        = payload["best_run"],
         n_runs          = payload["n_runs"],
-        ai_sections     = payload["ai_sections"],
+        ai_sections     = type("AI", (), payload["ai_sections"])(),
         references      = payload["references"],
         base_sec        = base_sec,
         running_header  = pdf_running_header_html(),
@@ -414,6 +363,5 @@ def build_pdf(
     pdf_bytes  = HTML(string=html_str).write_pdf()
     meta       = payload["meta"]
     safe_title = meta.get("title", "MLForge_Report").replace(" ", "_")
-    filename   = f"{safe_title}_{meta.get('date', 'report').replace(' ', '_')}.pdf"
-
+    filename   = f"{safe_title}_{meta.get('date','report').replace(' ','_')}.pdf"
     return pdf_bytes, filename

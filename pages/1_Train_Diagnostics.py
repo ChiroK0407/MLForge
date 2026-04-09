@@ -1,14 +1,8 @@
 # pages/1_Train_Diagnostics.py
 # ─────────────────────────────────────────────────────────────
 # Train a single model, run diagnostics, optionally auto-tune.
-# v3: ALL training settings (split, CV, autotune) live here.
-# Settings are saved to session state via save_train_cfg()
-# so all other pages read the same config automatically.
-#
-# Fixes over submitted version:
-#   - hide_slow moved OUTSIDE the form so model list updates instantly
-#   - Warning banner shown when settings are unsaved and user trains
-#   - st.pyplot width kwarg corrected to width='stretch'
+# v4: Smart Save — user selects which artifacts to store.
+#     Stored artifacts flow directly into the report generator.
 # ─────────────────────────────────────────────────────────────
 
 from config.sidebar_config import (
@@ -29,7 +23,7 @@ from backend.plotting       import (
     plot_feature_importance, plot_autotune_history,
 )
 from backend.analyze_helper import interpret_metrics, render_analysis
-from backend.session_store  import save_run
+from backend.session_store  import save_run, figure_to_bytes, ARTIFACT_LABELS
 from config.page_header     import render_header
 
 css_path = Path("assets/style.css")
@@ -47,9 +41,10 @@ if "df" not in st.session_state:
 
 df         = st.session_state["df"]
 target_col = st.session_state.get("target_col", df.columns[-1])
+input_features = st.session_state.get("input_features")
 
 # ══════════════════════════════════════════════════════════
-# SECTION 1 — Training settings (owned by this page)
+# SECTION 1 — Training settings
 # ══════════════════════════════════════════════════════════
 st.markdown('<div class="section-header">Training settings</div>',
             unsafe_allow_html=True)
@@ -60,11 +55,11 @@ st.caption(
 
 _existing = get_train_cfg()
 
-# ── hide_slow OUTSIDE the form so model list reacts immediately ──
+# hide_slow outside form so model list reacts immediately
 hide_slow = st.toggle(
     "Hide slow models (GP / Kernel Ridge)",
     value=_existing["hide_slow"],
-    help="Both scale as O(n³) — recommended to hide for datasets > 1,000 rows.",
+    help="Both scale as O(n³) — recommended for datasets > 1,000 rows.",
     key="hide_slow_toggle",
 )
 
@@ -76,17 +71,12 @@ with st.form("training_settings_form"):
             "Split strategy",
             ["Time-ordered split", "Random shuffle split"],
             index=0 if _existing["split_strategy"] == "Time-ordered split" else 1,
-            help=(
-                "**Time-ordered**: preserves row order — use for time-series data.\n\n"
-                "**Random shuffle**: random split — use for i.i.d. tabular datasets."
-            ),
         )
         train_size_pct = st.slider(
             "Train size",
             min_value=50, max_value=95,
             value=int(_existing["train_size"] * 100),
             step=5, format="%d%%",
-            help="Fraction of data used for training. Remainder → test set.",
         )
         train_size = train_size_pct / 100.0
         if st.session_state.get("dataset_row_count"):
@@ -100,13 +90,11 @@ with st.form("training_settings_form"):
             "Random seed",
             min_value=0, max_value=99999,
             value=_existing["random_seed"], step=1,
-            help="Seed for reproducible random splits.",
         )
         k_folds = st.slider(
             "CV folds (k)",
             min_value=2, max_value=10,
             value=_existing["k_folds"], step=1,
-            help="Number of folds for cross-validation during auto-tune.",
         )
 
     with sc3:
@@ -114,16 +102,11 @@ with st.form("training_settings_form"):
             "Optuna trials",
             options=[5, 10, 20, 50, 100],
             value=_existing["autotune_budget"],
-            help=(
-                "Trials Optuna evaluates during auto-tune.\n\n"
-                "5–10 → fast preview\n"
-                "20–50 → good quality\n"
-                "100 → thorough (slow on large models)"
-            ),
         )
 
-    submitted = st.form_submit_button("✅  Apply & Save settings", type="primary",
-                                      width='stretch')
+    submitted = st.form_submit_button(
+        "✅  Apply & Save settings", type="primary", width='stretch'
+    )
 
 if submitted:
     new_cfg = {
@@ -136,15 +119,12 @@ if submitted:
         "hide_slow":       hide_slow,
     }
     save_train_cfg(new_cfg)
-    st.session_state["settings_saved"] = True
     st.success(
         f"Settings saved — {int(train_size*100)}% train · "
         f"{split_strategy.split()[0]} · seed {random_seed} · "
         f"{k_folds}-fold CV · {autotune_budget} Optuna trials"
     )
 
-# FIX: detect unsaved changes and warn before training
-# We compare the form's current widget values against what is saved.
 cfg = get_train_cfg()
 
 _form_matches_cfg = (
@@ -155,12 +135,10 @@ _form_matches_cfg = (
     and int(autotune_budget) == cfg["autotune_budget"]
     and hide_slow == cfg["hide_slow"]
 )
-
 if not _form_matches_cfg:
     st.warning(
         "⚠️ You have unsaved setting changes. "
-        "Click **✅ Apply & Save settings** before training, "
-        "or training will use the previously saved configuration.",
+        "Click **✅ Apply & Save settings** before training.",
         icon=None,
     )
 
@@ -173,11 +151,9 @@ st.markdown('<div class="section-header">Model configuration</div>',
 col_model, col_info = st.columns([2, 1])
 
 with col_model:
-    # FIX: use live hide_slow toggle value (not cfg which may be stale)
     visible_keys = (
         [k for k in ALL_MODEL_KEYS if k not in ("gaussian_process", "kernel_ridge")]
-        if hide_slow
-        else ALL_MODEL_KEYS
+        if hide_slow else ALL_MODEL_KEYS
     )
     labels    = {k: MODEL_REGISTRY[k]["label"] for k in visible_keys}
     model_key = st.selectbox(
@@ -196,12 +172,10 @@ with col_info:
         f"· Seed: {cfg['random_seed']}"
     )
 
-# ── Advanced params expander ──────────────────────────────
 with st.expander("Override model hyperparameters (optional)"):
     default_params = meta["default_params"].copy()
     custom_params  = {}
     param_cols     = st.columns(min(len(default_params), 3))
-
     for i, (param, default_val) in enumerate(default_params.items()):
         with param_cols[i % len(param_cols)]:
             if isinstance(default_val, float):
@@ -221,7 +195,6 @@ with st.expander("Override model hyperparameters (optional)"):
                 )
             else:
                 custom_params[param] = default_val
-
     use_custom = st.toggle("Apply custom params", value=False)
 
 # ══════════════════════════════════════════════════════════
@@ -234,9 +207,13 @@ if st.button("Train model", type="primary"):
         result = train_model(
             df, target_col, model_key, cfg,
             custom_params=custom_params if use_custom else None,
+            input_features=input_features,
         )
     st.session_state["p1_result"]   = result
     st.session_state["p1_autotune"] = None
+    # Clear previously cached figures so they are regenerated fresh
+    for k in ["p1_fig_avp", "p1_fig_res", "p1_fig_imp", "p1_df_imp"]:
+        st.session_state.pop(k, None)
     st.success("Training complete.")
 
 if "p1_result" not in st.session_state or st.session_state["p1_result"] is None:
@@ -263,7 +240,7 @@ m4.metric("MSE",  f"{metrics['MSE']:.6f}")
 analysis = interpret_metrics(metrics, model_key, df, target_col)
 render_analysis(analysis)
 
-# ── Plots ──────────────────────────────────────────────────
+# ── Plots (cached in session state after first render) ────
 st.markdown('<div class="section-header">Visualisations</div>',
             unsafe_allow_html=True)
 
@@ -272,22 +249,32 @@ tab_avp, tab_res, tab_imp = st.tabs(
 )
 
 with tab_avp:
-    fig_avp = plot_actual_vs_predicted(
-        data["y_test"], data["y_pred"], target_col, labels[model_key]
-    )
-    st.pyplot(fig_avp, width='stretch')
+    if "p1_fig_avp" not in st.session_state:
+        st.session_state["p1_fig_avp"] = plot_actual_vs_predicted(
+            data["y_test"], data["y_pred"], target_col, labels[model_key]
+        )
+    st.pyplot(st.session_state["p1_fig_avp"], width='stretch')
 
 with tab_res:
-    fig_res = plot_residuals(data["y_test"], data["y_pred"], target_col)
-    st.pyplot(fig_res, width='stretch')
+    if "p1_fig_res" not in st.session_state:
+        st.session_state["p1_fig_res"] = plot_residuals(
+            data["y_test"], data["y_pred"], target_col
+        )
+    st.pyplot(st.session_state["p1_fig_res"], width='stretch')
 
 with tab_imp:
-    df_imp = extract_feature_importance(
-        model, feat_names, data["X_train"], data["y_train"]
+    if "p1_df_imp" not in st.session_state:
+        st.session_state["p1_df_imp"] = extract_feature_importance(
+            model, feat_names, data["X_train"], data["y_train"]
+        )
+    if "p1_fig_imp" not in st.session_state:
+        st.session_state["p1_fig_imp"] = plot_feature_importance(
+            st.session_state["p1_df_imp"]
+        )
+    st.dataframe(
+        st.session_state["p1_df_imp"], width='stretch', hide_index=True
     )
-    st.dataframe(df_imp, width='stretch', hide_index=True)
-    fig_imp = plot_feature_importance(df_imp)
-    st.pyplot(fig_imp, width='stretch')
+    st.pyplot(st.session_state["p1_fig_imp"], width='stretch')
 
 # ══════════════════════════════════════════════════════════
 # SECTION 5 — Auto-tune
@@ -298,8 +285,7 @@ auto_col1, auto_col2 = st.columns([3, 1])
 with auto_col1:
     st.caption(
         f"Optuna will run **{cfg['autotune_budget']} trials** with "
-        f"**{cfg['k_folds']}-fold CV**. "
-        f"Adjust in Training Settings above and save."
+        f"**{cfg['k_folds']}-fold CV**. Adjust in Training Settings above."
     )
 with auto_col2:
     run_autotune_btn = st.button("Run auto-tune", width='stretch')
@@ -328,6 +314,15 @@ if run_autotune_btn:
             custom_params=autotune_result["best_params"],
         )
         autotune_result["tuned_result"] = tuned_result
+        # Cache autotune figures
+        if not autotune_result["cv_results"].empty:
+            st.session_state["p1_fig_at_hist"] = plot_autotune_history(
+                autotune_result["cv_results"]
+            )
+        st.session_state["p1_fig_at_avp"] = plot_actual_vs_predicted(
+            tuned_result["data"]["y_test"], tuned_result["data"]["y_pred"],
+            target_col, f"{labels[model_key]} (tuned)"
+        )
         st.session_state["p1_autotune"] = autotune_result
         st.success(
             f"Best CV R² = **{autotune_result['best_score']:.4f}** "
@@ -355,36 +350,110 @@ if st.session_state.get("p1_autotune"):
     compare_df["Δ"] = (compare_df["Tuned"] - compare_df["Original"]).round(6)
     st.dataframe(compare_df, width='stretch', hide_index=True)
 
-    if not at["cv_results"].empty:
-        fig_hist = plot_autotune_history(at["cv_results"])
-        st.pyplot(fig_hist, width='stretch')
+    if "p1_fig_at_hist" in st.session_state:
+        st.pyplot(st.session_state["p1_fig_at_hist"], width='stretch')
 
-    fig_tuned_avp = plot_actual_vs_predicted(
-        tuned["data"]["y_test"], tuned["data"]["y_pred"],
-        target_col, f"{labels[model_key]} (tuned)"
-    )
-    st.pyplot(fig_tuned_avp, width='stretch')
+    if "p1_fig_at_avp" in st.session_state:
+        st.pyplot(st.session_state["p1_fig_at_avp"], width='stretch')
 
 # ══════════════════════════════════════════════════════════
-# SECTION 6 — Save run
+# SECTION 6 — Smart Save
 # ══════════════════════════════════════════════════════════
 st.markdown('<div class="section-header">Save run</div>', unsafe_allow_html=True)
+st.markdown(
+    "Choose which results to store with this run. "
+    "Only saved artifacts will be available in the **Report Generator**."
+)
 
-save_col1, save_col2 = st.columns([3, 1])
-with save_col1:
+# ── Build available options dynamically ───────────────────
+_available: dict[str, str] = {
+    "actual_vs_predicted": ARTIFACT_LABELS["actual_vs_predicted"],
+    "residuals":           ARTIFACT_LABELS["residuals"],
+}
+if "p1_fig_imp" in st.session_state:
+    _available["feature_importance"] = ARTIFACT_LABELS["feature_importance"]
+
+if st.session_state.get("p1_autotune"):
+    _available["autotune_metrics"]    = ARTIFACT_LABELS["autotune_metrics"]
+    _available["autotune_comparison"] = ARTIFACT_LABELS["autotune_comparison"]
+    if "p1_fig_at_hist" in st.session_state:
+        _available["autotune_history"] = ARTIFACT_LABELS["autotune_history"]
+
+_default_keys = list(_available.keys())
+
+sv1, sv2 = st.columns([3, 1])
+
+with sv1:
+    selected_artifacts = st.multiselect(
+        "Artifacts to save",
+        options=list(_available.keys()),
+        default=_default_keys,
+        format_func=lambda k: _available[k],
+        help=(
+            "All checked items will be stored with the run and made available "
+            "as options in the Report Generator."
+        ),
+    )
     run_notes = st.text_input(
         "Notes (optional)",
         placeholder="e.g. baseline run, IndPenSim batch 3"
     )
-with save_col2:
-    save_btn = st.button("Save to comparison", width='stretch')
+
+with sv2:
+    st.markdown("&nbsp;")   # vertical alignment spacer
+    save_btn = st.button("Save run", type="primary", width='stretch')
 
 if save_btn:
+    # Determine which result to save (tuned if available, else original)
     active_result = (
         st.session_state["p1_autotune"]["tuned_result"]
         if st.session_state.get("p1_autotune")
         else res
     )
+
+    # Build artifacts dict from selected keys
+    artifacts: dict = {}
+
+    if "actual_vs_predicted" in selected_artifacts:
+        fig = st.session_state.get("p1_fig_avp")
+        if fig:
+            artifacts["actual_vs_predicted"] = figure_to_bytes(fig)
+
+    if "residuals" in selected_artifacts:
+        fig = st.session_state.get("p1_fig_res")
+        if fig:
+            artifacts["residuals"] = figure_to_bytes(fig)
+
+    if "feature_importance" in selected_artifacts:
+        fig = st.session_state.get("p1_fig_imp")
+        if fig:
+            artifacts["feature_importance"] = figure_to_bytes(fig)
+
+    if "autotune_history" in selected_artifacts:
+        fig = st.session_state.get("p1_fig_at_hist")
+        if fig:
+            artifacts["autotune_history"] = figure_to_bytes(fig)
+
+    if "autotune_metrics" in selected_artifacts and st.session_state.get("p1_autotune"):
+        at = st.session_state["p1_autotune"]
+        artifacts["autotune_metrics"] = {
+            "best_params": at.get("best_params", {}),
+            "best_score":  at.get("best_score"),
+            "method":      at.get("method", ""),
+            "n_trials":    at.get("n_trials", 0),
+        }
+
+    if "autotune_comparison" in selected_artifacts and st.session_state.get("p1_autotune"):
+        at     = st.session_state["p1_autotune"]
+        tuned  = at["tuned_result"]
+        t_mets = tuned["metrics"]
+        artifacts["autotune_comparison"] = [
+            {"Metric": "R²",   "Original": metrics["R2"],   "Tuned": t_mets["R2"],   "Δ": round(t_mets["R2"]   - metrics["R2"],   6)},
+            {"Metric": "RMSE", "Original": metrics["RMSE"], "Tuned": t_mets["RMSE"], "Δ": round(t_mets["RMSE"] - metrics["RMSE"], 6)},
+            {"Metric": "MAE",  "Original": metrics["MAE"],  "Tuned": t_mets["MAE"],  "Δ": round(t_mets["MAE"]  - metrics["MAE"],  6)},
+            {"Metric": "MSE",  "Original": metrics["MSE"],  "Tuned": t_mets["MSE"],  "Δ": round(t_mets["MSE"]  - metrics["MSE"],  6)},
+        ]
+
     run_id = save_run(
         model_key     = model_key,
         metrics       = active_result["metrics"],
@@ -395,6 +464,28 @@ if save_btn:
         best_params   = st.session_state["p1_autotune"]["best_params"]
                         if st.session_state.get("p1_autotune") else None,
         target_col    = target_col,
+        input_features= input_features,
         notes         = run_notes,
+        artifacts     = artifacts,
     )
-    st.success(f"Run #{run_id} saved. View on Page 5 → Session Comparison.")
+
+    saved_labels = [_available[k] for k in selected_artifacts if k in _available]
+    st.success(
+        f"Run #{run_id} saved with {len(artifacts)} artifact(s): "
+        f"{', '.join(saved_labels) or 'metrics only'}. "
+        f"View on Page 5 → Session Comparison."
+    )
+
+# ── Clear/Refresh ──────────────────────────────────────────
+st.markdown("---")
+col_clear, col_spacer = st.columns([1, 3])
+with col_clear:
+    if st.button("🔄 Clear & Refresh", help="Keep dataset loaded, clear training results, and return to model selection"):
+        # Clear training-related session state
+        keys_to_clear = [
+            "p1_result", "p1_autotune", "p1_fig_avp", "p1_fig_res", 
+            "p1_fig_imp", "p1_df_imp", "p1_fig_at_hist", "p1_fig_at_avp"
+        ]
+        for key in keys_to_clear:
+            st.session_state.pop(key, None)
+        st.rerun()

@@ -29,6 +29,7 @@ if "df" not in st.session_state:
 
 df         = st.session_state["df"]
 target_col = st.session_state.get("target_col", df.columns[-1])
+input_features = st.session_state.get("input_features")
 
 st.caption(
     f"Using: {cfg['split_strategy'].split()[0]} split · "
@@ -60,7 +61,7 @@ model_key = st.selectbox(
 
 if st.button("Train baseline", type="primary"):
     with st.spinner("Training…"):
-        result = train_model(df, target_col, model_key, cfg)
+        result = train_model(df, target_col, model_key, cfg, input_features=input_features)
         df_imp = extract_feature_importance(
             result["model"],
             result["feature_names"],
